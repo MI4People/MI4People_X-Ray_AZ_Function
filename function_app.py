@@ -5,7 +5,7 @@ import logging
 import uuid
 import os
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 logger = logging.getLogger(__name__)
 
 
@@ -13,12 +13,15 @@ logger = logging.getLogger(__name__)
 def model_req(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:
     logger.info(f"Request Received: {context.invocation_id}")
     image = req.files["image"]
+    options = req.form.getlist("method")
+    k = req.form.get("k", 5)
+    logger.info(f"Request: {context.invocation_id}; Options: {options}")
     if not image:
         return func.HttpResponse(status_code=400, body="Please provide an image file")
     try:
         account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
         blob_service_client = BlobServiceClient(
-            account_url=f"https://{account_name}.blob.core.windows.net/",
+            account_url=f"https://{account_name}.blob.core.windows.net",
             credential=os.getenv("AZURE_STORAGE_ACCESS_KEY")
         )
         container_client = blob_service_client.get_container_client(
@@ -32,7 +35,11 @@ def model_req(req: func.HttpRequest, context: func.Context) -> func.HttpResponse
         # Set request timeout to 15 seconds
         response = requests.post(
             url=os.getenv("MODEL_ENDPOINT"),
-            json={"image_uuid": str(image_uuid)},
+            json={
+                "image_uuid": str(image_uuid),
+                "options": options,
+                "k": k,
+            },
             headers={
                 "Authorization": f"Bearer {os.getenv('MODEL_AUTH_KEY')}",
                 "Content-Type": "application/json",
@@ -43,11 +50,12 @@ def model_req(req: func.HttpRequest, context: func.Context) -> func.HttpResponse
                 f"Request: {context.invocation_id}; Error: {response.text}"
             )
             return func.HttpResponse(
-                status_code=500, body="Internal Server Error"
+                status_code=response.status_code, body="Internal Server Error"
             )
         blob_service_client.close()
+        logger.debug(f"Request: {context.invocation_id}; Response: {response.json()}")
         return func.HttpResponse(
-            status_code=200, body=response.json()
+            status_code=response.status_code, body=response.json()
         )
     except Exception as e:
         logger.error(f"Request: {context.invocation_id}; Error: {e}")

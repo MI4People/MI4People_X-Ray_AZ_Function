@@ -5,7 +5,7 @@ import logging
 import uuid
 import os
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +15,8 @@ def model_req(req: func.HttpRequest, context: func.Context) -> func.HttpResponse
     image = req.files["image"]
     options = req.form.getlist("method")
     k = req.form.get("k", 5)
-    logger.info(f"Request: {context.invocation_id}; Options: {options}")
+    if not options:
+        return func.HttpResponse(status_code=400, body="Please provide a method")
     if not image:
         return func.HttpResponse(status_code=400, body="Please provide an image file")
     try:
@@ -29,17 +30,19 @@ def model_req(req: func.HttpRequest, context: func.Context) -> func.HttpResponse
         )
         image_uuid = uuid.uuid4()
         blob_client = container_client.get_blob_client(f"{image_uuid}")
-        content_settings = ContentSettings(content_type="image/png")
+        content_settings = ContentSettings(content_type="image/jpg")
         blob_client.upload_blob(image, content_settings=content_settings, overwrite=True)
         logger.info(f"Request: {context.invocation_id}; Image Uploaded: {image_uuid}")
+        payload = {
+            "image_uuid": blob_client.blob_name,
+            "options": options,
+            "k": k,
+        }
+        logger.info(f"Request: {context.invocation_id}; Payload: {payload}")
         # Set request timeout to 15 seconds
         response = requests.post(
             url=os.getenv("MODEL_ENDPOINT"),
-            json={
-                "image_uuid": str(image_uuid),
-                "options": options,
-                "k": k,
-            },
+            json=payload,
             headers={
                 "Authorization": f"Bearer {os.getenv('MODEL_AUTH_KEY')}",
                 "Content-Type": "application/json",
